@@ -1,0 +1,59 @@
+variables:
+  DOCKER_REGISTRY: $CI_REGISTRY
+  DOCKER_TLS_CERTDIR: ''
+
+stages:
+  - test
+  - build
+
+services:
+  - name: docker:19.03.13-dind
+    command:
+      ["--insecure-registry=13.209.236.232:8888"]
+
+test:
+  stage: test
+  only:
+    - main
+  image: node:18.17-alpine
+  script:
+    - echo "Installing curl..."
+    - apk add --no-cache curl
+    - echo "Installed packages:"
+    - apk info
+    - echo "Starting npm install..."
+    - npm install
+    - echo "Starting npm run dev..."
+    - npm run dev &
+    - echo "Waiting for the server to start..."
+    - sleep 5
+    - echo "Checking npm run dev process..."
+    - ps aux | grep "npm run dev"
+    - echo "Waiting for the server to start..."
+    - for i in {1..120}; do curl -s http://localhost:3000 && break || sleep 1; done
+    - echo "Checking if server is running..."
+    - |
+      if curl -I http://localhost:3000; then
+        echo "Frontend server is running successfully."
+        pkill -f "npm run dev"
+      else
+        echo "Error: Frontend server failed to start." >&2
+        pkill -f "npm run dev"
+        exit 1
+      fi
+      
+build:
+  stage: build
+  image: docker
+  needs:
+    - job: test
+      artifacts: true
+  before_script:
+    - apk update
+    - apk add --no-cache docker curl jq
+
+  script:
+    - echo $REGISTRY_PASSWORD | docker login $CI_REGISTRY -u $REGISTRY_USER --password-stdin
+    - TAG_LATEST="v$CI_PIPELINE_IID" 
+    - docker build -t $CI_REGISTRY:$TAG_LATEST .
+    - docker push $CI_REGISTRY:$TAG_LATEST
